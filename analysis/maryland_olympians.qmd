@@ -1,0 +1,278 @@
+---
+title: "Maryland Olympians"
+format: html
+editor: visual
+jupyter: python3
+---
+
+```{python}
+import pandas as pd
+import requests
+import json
+from pandas import json_normalize
+
+response = requests.get('https://www.teamusa.com/api/athletes?limit=10000&skip=0')
+data = response.json()
+
+def print_json_structure(d, indent=0):
+    for key, value in d.items():
+        print('  ' * indent + str(key))
+        if isinstance(value, dict):
+            print_json_structure(value, indent + 1)
+        elif isinstance(value, list):
+            if len(value) > 0 and isinstance(value[0], dict):
+                print_json_structure(value[0], indent + 1)
+            else:
+                print('  ' * (indent + 1) + str(value))
+
+
+```
+
+```{python}
+data
+
+```
+
+```{python}
+
+athletes_file_path = os.path.join(data_folder, 'athletes.json')
+
+with open(athletes_file_path, 'w') as json_file_athletes:
+    json.dump(data, json_file_athletes)
+```
+
+```{python}
+
+schedule = requests.get(
+    'https://schedules.nbcolympics.com/api/v1/schedule?timeZone=America%2FNew_York&startDate=2024-01-01&endDate=2024-12-31'
+    )
+
+
+```
+
+```{python}
+import os
+
+# Specify the path to the data folder in the repo
+data_folder = '/Users/greg.morton/Documents/baltimoreBanner/Projects/2024/maryland_olympians/data'
+
+# Create the data folder if it doesn't exist
+if not os.path.exists(data_folder):
+    os.makedirs(data_folder)
+
+# Specify the file path for the exported JSON file
+json_file_path = os.path.join(data_folder, 'schedule.json')
+
+# Export the JSON data to the file
+with open(json_file_path, 'w') as json_file:
+    json.dump(sched, json_file)
+
+# Print the file path for reference
+print(f'Successfully exported JSON file to: {json_file_path}')
+
+```
+
+```{r}
+library(rvest)
+library(httr)
+library(jsonlite)
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(units)
+library(knitr)
+library(kableExtra)
+library(tidycensus)
+library(purrr)
+library(rcartocolor)
+library(viridis)
+library(DHARMa)
+library(mgcv)
+library(MASS)
+library(gratia)
+library(mapview)
+library(mgcViz)
+library(nngeo)
+library(janitor)
+library(hms)
+
+```
+
+```{r}
+json_schedule_path <- "data/schedule.json"
+
+
+big_sched <- jsonlite::fromJSON(json_schedule_path, simplifyDataFrame = T, flatten = T) %>% 
+  .$data %>% 
+  clean_names()
+
+big_sched %>% 
+  # as.data.frame() %>% 
+  clean_names() %>% 
+  mutate(single_event_start_date = as_datetime(as.numeric(single_event_start_date)),
+       hms_start_time = hms(seconds_to_period(as.numeric(single_event_start_date))),
+       hour = hour(hms_start_time),
+       minute = minute(hms_start_time),
+       second = second(hms_start_time),
+       single_event_end_date = as_datetime(as.numeric(single_event_end_date)),
+       ) %>% 
+  unnest(sports) %>% 
+  View()
+
+sched_test <- big_sched %>%
+  dplyr::select(
+    single_event_internal_title, 
+    single_event_thumbnail_alt_title,
+    single_event_short_title,
+    single_event_status,
+    single_event_stream_type,
+    single_event_start_date,
+    single_event_end_date,
+    single_event_summary,
+    single_event_is_medal_session,
+    single_event_video_url,
+    single_event_peacock_destination_url,
+    single_event_language,
+    single_event_game_type,
+    single_event_game,
+    single_event_last_modified,
+    single_event_network_name,
+    single_event_network_priority,
+    single_event_network_upcoming_message,
+    single_event_restricted_timezones,
+    sports:topics
+  ) %>% 
+  # unnest_wider(sports) %>% 
+  mutate(single_event_start_date = as_datetime(as.numeric(single_event_start_date)),
+     single_event_end_date = as_datetime(as.numeric(single_event_end_date)),
+     single_event_last_modified = as_datetime(as.numeric(single_event_last_modified)),
+     athlete = map(athletes, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+     athlete_ids = map(athletes, ~ .x$athleteId) %>% map_chr(~ paste(.x, collapse = ", ")),
+     sport = map(sports, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+     phase = map(phases, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+     countries = map(countries, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+     tags = map(topics, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+     olympic_unit = map(units, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+     event = map(events, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", "))
+     ) %>% 
+  dplyr::select(-athletes, 
+                -sports, 
+                -phases, 
+                -countries, 
+                -topics, 
+                -units,
+                events,
+                -single_event_thumbnail_alt_title,
+                -single_event_network_upcoming_message,
+                -events) %>% 
+  dplyr::select(
+    sport, 
+    athlete,
+    athlete_ids,
+    phase,
+    single_event_internal_title,
+    single_event_short_title,
+    single_event_start_date,
+    single_event_end_date,
+    single_event_last_modified,
+    single_event_summary,
+    single_event_is_medal_session,
+    single_event_network_name,
+    single_event_video_url,
+    single_event_peacock_destination_url,
+    single_event_language,
+    everything()
+  )
+
+  # View()
+  # wiwrite_csv("/Users/greg.morton/Documents/baltimoreBanner/Projects/2024/maryland_olympians/data/schedule.csv")
+  
+
+  
+
+```
+
+```{r}
+athletes_path <- "data/athletes.json"
+
+big_athletes <- jsonlite::fromJSON(athletes_path, simplifyDataFrame = T, flatten = T) %>% 
+  .$entries %>% 
+  clean_names()
+
+athletes <- big_athletes %>% 
+  dplyr::select(
+    first_name,
+    last_name,
+    content_tags,
+    olympic_paralympic,
+    sport,
+    future_olympics,
+    past_olympics,
+    olympian_paralympian_years,
+    olympian_paralympian_qualified,
+    quick_facts_hometown_city,
+    quick_facts_hometown_state,
+    medals_bronze,
+    medals_silver,
+    medals_gold,
+    thumbnail_image_url,
+    para_classification,
+    bio_biography,
+    quick_facts_height,
+    quick_facts_birthday,
+    quick_facts_deceased_date,
+    quick_facts_age,
+    quick_facts_education,
+    uid,
+    url
+  ) %>% 
+  mutate(
+    season = map(sport, ~ .x$season) %>% map_chr(~ paste(.x, collapse = ", ")),
+    type = map(sport, ~ .x$type) %>% map_chr(~ paste(.x, collapse = ", ")),
+    sport = map(sport, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+    tags = map(content_tags, ~ .x$title) %>% map_chr(~ paste(.x, collapse = ", ")),
+    quick_facts_birthday = lubridate::as_date(quick_facts_birthday),
+    quick_facts_deceased_date = lubridate::as_date(quick_facts_deceased_date),
+    full_name = paste(first_name, last_name, sep = " ")
+      ) %>% 
+  rename(
+    athlete_id = uid,
+    athlete_url = url,
+    height = quick_facts_height,
+    birth_date = quick_facts_birthday,
+    deceased_date = quick_facts_deceased_date,
+    age = quick_facts_age,
+    education = quick_facts_education,
+    hometown_city = quick_facts_hometown_city,
+    hometown_state = quick_facts_hometown_state
+  ) %>% 
+  dplyr::select(
+    first_name,
+    last_name,
+    full_name,
+    olympic_paralympic,
+    sport,
+    season,
+    hometown_city,
+    hometown_state,
+    future_olympics,
+    past_olympics,
+    olympian_paralympian_years,
+    olympian_paralympian_qualified,
+    medals_bronze,
+    medals_silver,
+    medals_gold,
+    thumbnail_image_url,
+    para_classification,
+    bio_biography,
+    height,
+    birth_date,
+    deceased_date,
+    age,
+    education,
+    tags,
+    athlete_id,
+    athlete_url
+  )
+
+```
