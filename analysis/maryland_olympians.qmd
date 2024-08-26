@@ -28,10 +28,6 @@ def print_json_structure(d, indent=0):
 
 ```
 
-```{python}
-data
-
-```
 
 ```{python}
 
@@ -96,14 +92,17 @@ library(nngeo)
 library(janitor)
 library(hms)
 
+# turn off scientific notation
+options(scipen = 999)
+
 ```
 
 ```{r}
 json_schedule_path <- "data/schedule.json"
 
 
-big_sched <- jsonlite::fromJSON(json_schedule_path, simplifyDataFrame = T, flatten = T) %>% 
-  .$data %>% 
+big_sched <- jsonlite::fromJSON(json_schedule_path, simplifyDataFrame = T, flatten = T) %>%
+  .$data %>%
   clean_names()
 
 big_sched %>% 
@@ -193,7 +192,7 @@ sched_test <- big_sched %>%
 ```
 
 ```{r}
-athletes_path <- "data/athletes.json"
+athletes_path <- "data/athletes_2.json"
 
 big_athletes <- jsonlite::fromJSON(athletes_path, simplifyDataFrame = T, flatten = T) %>% 
   .$entries %>% 
@@ -275,4 +274,252 @@ athletes <- big_athletes %>%
     athlete_url
   )
 
+```
+
+# analysis
+
+## part 1: counting 
+
+### who is from Maryland?
+```{r}
+
+census_variables <- tidycensus::load_variables(2022, "acs5", cache = TRUE)
+# get census population data from 2022 acs 
+population_data <- get_acs(
+  geography = "state",
+  variables = c(
+    "B01003_001", # Total population
+    "B15003_001", # educational attainment total
+    "B15003_002", # no schooling
+    "B15003_017", # educational attainment hs diploma
+    "B15003_019", #educational attainment some college, < 1 year
+    "B15003_020", # educational attainment some college, > 1 year
+    "B15003_022", # educational attainment bachelors
+    "B15003_023", # educational attainment graduate
+    "B15003_024", # educational attainment professional
+    "B15003_025", # educational attainment doctorate
+    "B19013_001" # median household income 
+    ),
+  year = 2022, # Specify the year
+  survey = "acs5" # Use the 5-year ACS data
+) %>% 
+  clean_names %>% 
+  dplyr::select(name, variable, estimate) %>%  # Select only necessary columns
+  # make it wider so every state is it's own row
+  pivot_wider(
+    names_from = variable,
+    values_from = estimate) %>% 
+  rename(
+    state_population = B01003_001,
+    edu_attainment_total = B15003_001,
+    no_schooling = B15003_002,
+    hs_diploma = B15003_017,
+    some_college_lt_1 = B15003_019,
+    some_college_gt_1 = B15003_020,
+    bachelors = B15003_022,
+    graduate = B15003_023,
+    professional = B15003_024,
+    doctorate = B15003_025,
+    median_household_income = B19013_001
+  ) %>% 
+  mutate(pct_hs_diploma = hs_diploma / edu_attainment_total * 100,
+         pct_some_college_lt_1 = some_college_lt_1 / edu_attainment_total * 100,
+         pct_some_college_gt_1 = some_college_gt_1 / edu_attainment_total * 100,
+         pct_bachelors = bachelors / edu_attainment_total * 100,
+         pct_graduate = graduate / edu_attainment_total * 100,
+         pct_professional = professional / edu_attainment_total * 100,
+         pct_doctorate = doctorate / edu_attainment_total * 100,
+         pct_degree = (bachelors + graduate + professional + doctorate) / edu_attainment_total * 100
+        ) 
+  
+
+# create an object that'll let us join olympians to population data
+state_bridge <- 
+  data.frame(
+  state.name,
+  state.abb
+  )
+
+athletes_summary <- 
+  athletes %>% 
+  filter(str_detect(future_olympics, "2024")) %>%
+  # filter(olympic_paralympic != "Paralympian") %>% 
+  mutate(hometown_state = case_when(
+    hometown_state == "MD" ~ "MD",
+    str_detect(str_to_lower(hometown_city), "washington") ~ "DC",
+    str_detect(str_to_lower(full_name), "ruby lilley") ~ "MD",
+    TRUE ~ hometown_state
+  )) %>%
+  group_by(hometown_state) %>%
+  summarise(n = n(), 
+            total_medals = sum(medals_bronze + medals_silver + medals_gold, na.rm = T)) %>%
+  left_join(state_bridge, by = c("hometown_state" = "state.abb")) %>% 
+  left_join(population_data, by = c("state.name" = "name")) %>% 
+  mutate(athletes_per_100k = n / state_population * 100000,
+         medals_per_100k = total_medals / state_population * 100000,
+         medals_per_athlete = total_medals / n) %>% 
+  ungroup() 
+```
+
+### How does Maryland rank in terms of total athletes
+```{r}
+athletes_summary %>% 
+    arrange(desc(n)) 
+```
+
+### Athletes per 100k
+```{r}
+athletes_summary %>% 
+  arrange(desc(athletes_per_100k))
+
+```
+### Total medals 
+```{r}
+athletes_summary %>% 
+  arrange(desc(total_medals))
+```
+
+
+### Medals per 100k
+```{r}
+athletes_summary %>% 
+  arrange(desc(medals_per_100k))
+```
+
+### Medals per athlete
+```{r}
+athletes_summary %>% 
+  arrange(desc(medals_per_athlete)) %>% 
+  dplyr::select(hometown_state:state.name, medals_per_athlete, everything())
+```
+
+### Athletes and medals per sport, by state 
+```{r}
+  athletes %>% 
+  filter(str_detect(future_olympics, "2024")) %>%
+  group_by(hometown_state, sport) %>% 
+  filter(!is.na(hometown_state),
+         sport != "") %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = sport, values_from = n) %>% 
+  # replace all NAs with 0
+  mutate_all(~ replace_na(., 0)) %>% 
+  left_join(state_bridge, by = c("hometown_state" = "state.abb")) %>% 
+  left_join(population_data, by = c("state.name" = "name")) %>% 
+  View()
+
+```
+
+## Part 2: Relationships 
+
+### What is the relationship between education and olympic participation?
+```{r}
+
+athletes_summary %>% 
+  filter(!is.na(hometown_state)) %>% 
+  mutate(is_maryland = ifelse(hometown_state == "MD", "Maryland", "Other")) %>% 
+  arrange(desc(medals_per_100k))
+  # head(20) %>% 
+  # write_csv("data/medals_per_100k.csv")
+  ggplot(aes(x = pct_degree, y = athletes_per_100k, label = state.abb)) +
+  geom_point(aes(size = n, color = pct_degree)) +
+  geom_smooth() +
+  scale_size_continuous(range = c(1, 10)) +
+  scale_color_viridis_c() +
+  labs(
+    title = "Olympic Athletes per 100k vs. % of Population with a Degree",
+    x = "% of Population with a Degree",
+    y = "Olympic Athletes per 100k"
+  ) +
+  theme_minimal()
+
+```
+
+### What is the relationship between median hh income and olympic participation?
+```{r}
+athletes_summary %>% 
+  ggplot(aes(x = median_household_income, y = athletes_per_100k, label = state.abb)) +
+  geom_point(aes(size = n, color = pct_degree)) +
+  geom_smooth() +
+  scale_size_continuous(range = c(1, 10)) +
+  scale_color_viridis_c() +
+  labs(
+    title = "Olympic Athletes per 100k vs. Median Household Income",
+    x = "Median Household Income",
+    y = "Olympic Athletes per 100k"
+  ) +
+  theme_minimal()
+
+```
+
+### Is there a relationship between education/income and Olympic success?
+```{r}
+
+athletes_summary %>% 
+  ggplot(aes(x = median_household_income, y = medals_per_100k, label = state.abb)) +
+  geom_point(aes(size = n, color = pct_degree)) +
+  geom_smooth() +
+  scale_size_continuous(range = c(1, 10)) +
+  scale_color_viridis_c() +
+  labs(
+    title = "Medals Per 100k vs. % of Median HH Income",
+    x = "% of Population with a Degree",
+    y = "Olympic Athletes per 100k"
+  ) +
+  theme_minimal()
+
+lm(medals_per_100k ~ pct_degree + median_household_income, data = athletes_summary) %>% 
+  summary()
+
+
+
+```
+
+## Do Maryland's Olympians come from rich areas?
+```{r}
+
+geocoded_md <- 
+  athletes %>% 
+  ungroup() %>% 
+  filter(str_detect(future_olympics, "2024")) %>%
+  mutate(hometown_state = case_when(
+    hometown_state == "MD" & !str_detect(hometown_city, "Washington") ~ "MD",
+    str_detect(full_name, "Taylor Knibb") ~ "DC",
+    str_detect(str_to_lower(full_name), "ruby lilley") ~ "MD",
+    str_detect(str_to_lower(full_name), "kevin durant") ~ "MD",
+    TRUE ~ hometown_state
+  )) %>% 
+  filter(hometown_state == "MD") %>% 
+  mutate(city_state = paste(hometown_city, hometown_state, sep = ", ")) %>% 
+  as.data.frame() %>% 
+  # geocode 
+  tidygeocoder::geocode(
+    city = hometown_city,
+    state = hometown_state
+  )
+
+geocoded_md %>%
+  filter(!is.na(lat) & !is.na(long)) %>% 
+  st_as_sf(coords = c("long", "lat"), crs = 4326) %>% 
+  mapview()
+
+
+md_income_data <- get_acs(
+  geography = "county",
+  variables = "B19013_001", # Median household income
+  state = "MD",
+  year = 2022,
+  survey = "acs5",
+  geometry = T
+) 
+
+md_income_data <- md_income_data %>% 
+  st_transform(4326) 
+
+geocoded_md %>% 
+  filter(!is.na(lat) & !is.na(long)) %>% 
+  st_as_sf(coords = c("long", "lat"), crs = 4326) %>% 
+  st_join(md_income_data) %>% 
+  View()
+  
 ```
